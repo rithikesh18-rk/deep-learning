@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 2
+names: ['With Helmet', 'Without Helmet']
+
+roboflow:
+  workspace: rithikesh-s
+  project: bike-helmet-detection-2vdjo-9n2oh-ithbu
+  version: dataset
+  license: Public Domain
+  url: https://universe.roboflow.com/rithikesh-s/bike-helmet-detection-2vdjo-9n2oh-ithbu/dataset/dataset

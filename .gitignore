@@ -1,0 +1,45 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Environments / Virtual Environments
+.env
+.env.*
+.venv
+env/
+venv/
+ENV/
+
+# YOLOv8 / Ultralytics runtime training runs & temporary checkpoints
+runs/
+*.log
+
+# Large Dataset Archives
+dataset.zip
+*.zip
+
+
+# Runtime generated uploads, results, and SQLite database files (preserve directory placeholders)
+uploads/*
+!uploads/.gitkeep
+results/*
+!results/.gitkeep
+database/*.db
+!database/.gitkeep
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Operating System files
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
