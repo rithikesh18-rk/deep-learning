@@ -2,12 +2,27 @@
 Inference script to predict food category and confidence score from an input image.
 """
 
-import argparse
+import os
 import sys
+import logging
 from pathlib import Path
 from typing import Dict, Any, Union
 import torch
 import torch.nn.functional as F
+
+# Environment variables to constrain CPU threading on shared hosting (Linux/Render)
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
+# Safe PyTorch CPU Thread settings
+try:
+    torch.set_num_threads(1)
+    torch.set_num_interop_threads(1)
+except Exception:
+    pass
 
 # Add parent directory to path when running directly
 sys.path.append(str(Path(__file__).resolve().parent.parent))
@@ -17,13 +32,13 @@ from src.dataset import load_single_image
 from src.model import create_model
 from src.nutrition import get_nutrition_info
 
-
-# Limit PyTorch CPU thread allocation for memory & CPU efficiency on shared web hosts
-torch.set_num_threads(1)
-try:
-    torch.set_num_interop_threads(1)
-except Exception:
-    pass
+# Setup Logger
+logger = logging.getLogger("AI_Food_Predictor")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    ch = logging.StreamHandler()
+    ch.setFormatter(logging.Formatter("[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s"))
+    logger.addHandler(ch)
 
 import threading
 
@@ -47,24 +62,28 @@ def get_loaded_model(model_path: Union[str, Path] = config.MODEL_PATH) -> Dict[s
     if key not in _MODEL_CACHE:
         with _MODEL_LOCK:
             if key not in _MODEL_CACHE:
+                logger.info(f"Stage 3a: Loading model checkpoint from resolved path: '{model_path}'")
                 if not model_path.exists():
+                    logger.error(f"Checkpoint file missing at: '{model_path}'")
                     raise FileNotFoundError(f"Trained model checkpoint not found at path: '{model_path}'")
 
                 device = torch.device("cpu")
 
-                # Load checkpoint
+                logger.info("Stage 3b: Loading torch state_dict onto CPU...")
                 checkpoint = torch.load(model_path, map_location=device)
                 class_names = checkpoint["class_names"]
                 model_name = checkpoint.get("model_name", config.MODEL_NAME)
                 image_size = checkpoint.get("image_size", config.IMAGE_SIZE)
 
-                # Reconstruct architecture without downloading ImageNet weights (pretrained=False)
+                logger.info(f"Stage 3c: Reconstructing '{model_name}' (num_classes={len(class_names)}) with pretrained=False...")
                 model = create_model(
                     num_classes=len(class_names),
                     model_name=model_name,
                     freeze_backbone=False,
                     pretrained=False
                 ).to(device)
+
+                logger.info("Stage 3d: Applying model state_dict...")
                 model.load_state_dict(checkpoint["model_state_dict"])
                 model.eval()
 
@@ -74,6 +93,7 @@ def get_loaded_model(model_path: Union[str, Path] = config.MODEL_PATH) -> Dict[s
                     "image_size": image_size,
                     "device": device
                 }
+                logger.info("Stage 3e: Model cached in memory successfully.")
 
     return _MODEL_CACHE[key]
 
@@ -92,8 +112,11 @@ def predict_image(
     Returns:
         Dict[str, Any]: Dictionary containing food_name, confidence, serving_size, calories, protein, carbohydrates, fat.
     """
-    image_path = Path(image_path)
+    image_path = Path(image_path).resolve()
+    logger.info(f"Stage 2: Starting predict_image() for image: '{image_path.name}'")
+
     if not image_path.exists():
+        logger.error(f"Input image not found: '{image_path}'")
         raise FileNotFoundError(f"Input image not found at path: '{image_path}'")
 
     model_data = get_loaded_model(model_path)
@@ -102,10 +125,10 @@ def predict_image(
     image_size = model_data["image_size"]
     device = model_data["device"]
 
-    # Preprocess single input image
+    logger.info("Stage 4: Preprocessing input image tensor via PIL transform...")
     image_tensor = load_single_image(image_path=image_path, image_size=image_size).to(device)
 
-    # Model inference
+    logger.info("Stage 5: Executing PyTorch inference (torch.no_grad)...")
     with torch.no_grad():
         outputs = model(image_tensor)
         probabilities = F.softmax(outputs, dim=1)
@@ -114,8 +137,9 @@ def predict_image(
     predicted_idx = predicted_idx_tensor.item()
     confidence = confidence_tensor.item()
     raw_class_name = class_names[predicted_idx]
+    logger.info(f"Stage 5 Result: Predicted Class='{raw_class_name}', Confidence={confidence * 100.0:.2f}%")
 
-    # Retrieve local nutrition data
+    logger.info(f"Stage 6: Retrieving local nutrition info for '{raw_class_name}'...")
     nutrition = get_nutrition_info(raw_class_name)
 
     return {
