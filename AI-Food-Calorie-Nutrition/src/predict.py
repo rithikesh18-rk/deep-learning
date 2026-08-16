@@ -58,11 +58,12 @@ def get_loaded_model(model_path: Union[str, Path] = config.MODEL_PATH) -> Dict[s
                 model_name = checkpoint.get("model_name", config.MODEL_NAME)
                 image_size = checkpoint.get("image_size", config.IMAGE_SIZE)
 
-                # Reconstruct architecture and load weights
+                # Reconstruct architecture without downloading ImageNet weights (pretrained=False)
                 model = create_model(
                     num_classes=len(class_names),
                     model_name=model_name,
-                    freeze_backbone=False
+                    freeze_backbone=False,
+                    pretrained=False
                 ).to(device)
                 model.load_state_dict(checkpoint["model_state_dict"])
                 model.eval()

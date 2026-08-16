@@ -13,25 +13,27 @@ def create_model(
     model_name: str = "efficientnet_b0",
     freeze_backbone: bool = True,
     fine_tune: bool = False,
-    unfreeze_last_n_blocks: int = 2
+    unfreeze_last_n_blocks: int = 2,
+    pretrained: bool = True
 ) -> nn.Module:
     """
-    Creates a pretrained CNN model and configures feature layer freezing / fine-tuning.
+    Creates a CNN model architecture.
 
     Args:
         num_classes (int): Number of target food classes.
-        model_name (str): Architecture name ('efficientnet_b0', 'mobilenet_v3_small', 'mobilenet_v3_large').
+        model_name (str): Architecture name ('efficientnet_b0', 'mobilenet_v3_small').
         freeze_backbone (bool): If True, freeze feature extractor parameters.
-        fine_tune (bool): If True, unfreeze top N feature blocks for fine-tuning while keeping lower layers frozen.
-        unfreeze_last_n_blocks (int): Number of top feature blocks to unfreeze during fine-tuning.
+        fine_tune (bool): If True, unfreeze top N feature blocks for fine-tuning.
+        unfreeze_last_n_blocks (int): Number of top feature blocks to unfreeze.
+        pretrained (bool): If True, load ImageNet pretrained weights. Set False for inference.
 
     Returns:
-        nn.Module: PyTorch model configured for transfer learning or fine-tuning.
+        nn.Module: PyTorch model configured for transfer learning or inference.
     """
     model_name = model_name.lower()
 
     if model_name == "efficientnet_b0":
-        weights = models.EfficientNet_B0_Weights.DEFAULT
+        weights = models.EfficientNet_B0_Weights.DEFAULT if pretrained else None
         model = models.efficientnet_b0(weights=weights)
 
         # Handle freezing / fine-tuning
@@ -62,7 +64,7 @@ def create_model(
         )
 
     elif model_name == "mobilenet_v3_small":
-        weights = models.MobileNet_V3_Small_Weights.DEFAULT
+        weights = models.MobileNet_V3_Small_Weights.DEFAULT if pretrained else None
         model = models.mobilenet_v3_small(weights=weights)
 
         if fine_tune:
