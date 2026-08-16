@@ -18,18 +18,24 @@ ENV/
 runs/
 *.log
 
-# Large Dataset Archives
+# Large Dataset Archives & Raw Dataset Folders
 dataset.zip
 *.zip
-
+**/dataset/raw/*
+!**/dataset/raw/.gitkeep
 
 # Runtime generated uploads, results, and SQLite database files (preserve directory placeholders)
 uploads/*
 !uploads/.gitkeep
+**/static/uploads/*
+!**/static/uploads/.gitkeep
 results/*
 !results/.gitkeep
 database/*.db
 !database/.gitkeep
+
+# Track trained model weights required for demo
+!**/models/*.pth
 
 # IDEs and Editors
 .vscode/

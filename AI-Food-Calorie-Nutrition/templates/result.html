@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ result.food_name }} - AI Food Calorie & Nutrition Estimation</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <span class="header-badge">Classification & Nutrition Analysis</span>
+            <h1>Prediction Result</h1>
+            <p>Analyzed via Fine-Tuned EfficientNet-B0 Classifier</p>
+        </header>
+
+        <!-- Result Card -->
+        <main class="card">
+            <div class="result-grid">
+                
+                <!-- Left: Uploaded Image & Classification Badge -->
+                <div class="result-image-box">
+                    <img src="{{ image_url }}" alt="{{ result.food_name }}" class="result-image">
+                    
+                    <div class="pred-badge">{{ result.food_name }}</div>
+                    
+                    <div style="width: 100%; text-align: center; margin-top: 0.5rem;">
+                        <span style="font-size: 0.9rem; color: var(--text-secondary);">Model Confidence: <strong>{{ result.confidence_percentage }}</strong></span>
+                        <div class="confidence-bar-bg">
+                            <div class="confidence-bar-fill" style="width: {{ result.confidence * 100 }}%;"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right: Nutrition Facts Metrics -->
+                <div class="nutrition-details">
+                    <div class="nutrition-header">
+                        <h2>Nutritional Information</h2>
+                        <span class="serving-badge">📏 Serving Size: <strong>{{ result.serving_size }}</strong></span>
+                    </div>
+
+                    <div class="metrics-grid">
+                        <div class="metric-card highlight">
+                            <div class="metric-label">🔥 Total Calories</div>
+                            <div class="metric-value">{{ result.calories }}</div>
+                        </div>
+
+                        <div class="metric-card">
+                            <div class="metric-label">💪 Protein</div>
+                            <div class="metric-value">{{ result.protein }}</div>
+                        </div>
+
+                        <div class="metric-card">
+                            <div class="metric-label">🌾 Carbohydrates</div>
+                            <div class="metric-value">{{ result.carbohydrates }}</div>
+                        </div>
+
+                        <div class="metric-card">
+                            <div class="metric-label">🥑 Fat</div>
+                            <div class="metric-value">{{ result.fat }}</div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Action Button -->
+            <a href="{{ url_for('index') }}" class="btn-primary" style="margin-top: 2rem;">
+                🔄 Classify Another Food Image
+            </a>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>AI Food Classifier Demo &bull; Local PyTorch + Flask Solution</p>
+        </footer>
+    </div>
+
+</body>
+</html>

@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Food Calorie & Nutrition Estimation</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <span class="header-badge">Deep Learning & Computer Vision Demo</span>
+            <h1>AI Food Calorie & Nutrition Estimation</h1>
+            <p>Upload a food image to classify the dish using Fine-Tuned EfficientNet-B0 and retrieve automated local nutritional metrics.</p>
+        </header>
+
+        <!-- Error Alert -->
+        {% if error %}
+        <div class="alert-error">
+            <span>⚠️ <strong>Error:</strong> {{ error }}</span>
+        </div>
+        {% endif %}
+
+        <!-- Main Upload Card -->
+        <main class="card">
+            <form action="{{ url_for('predict') }}" method="POST" enctype="multipart/form-data" id="upload-form">
+                <div class="upload-area" id="drop-zone">
+                    <div class="upload-icon">📸</div>
+                    <div class="upload-title">Choose a food image or drag & drop here</div>
+                    <div class="upload-subtitle">Supports JPG, JPEG, PNG, WEBP (Max 16MB)</div>
+                    <input type="file" name="image" id="file-input" class="file-input" accept="image/png, image/jpeg, image/jpg, image/webp" required>
+                </div>
+
+                <!-- Instant Image Preview -->
+                <div class="preview-container" id="preview-container">
+                    <img id="image-preview" class="preview-image" src="#" alt="Selected Food Image Preview">
+                    <p style="font-size: 0.875rem; color: var(--text-secondary);" id="file-name-display"></p>
+                </div>
+
+                <button type="submit" class="btn-primary" id="submit-btn">
+                    🔍 Analyze Food & Estimate Nutrition
+                </button>
+            </form>
+
+            <!-- Supported Foods Pills -->
+            <div class="supported-section">
+                <div class="supported-title">Supported Food Classes (6 Dishes)</div>
+                <div class="food-pills">
+                    <span class="food-pill">🍛 Biryani</span>
+                    <span class="food-pill">🥞 Dosa</span>
+                    <span class="food-pill">⚪ Idli</span>
+                    <span class="food-pill">🫓 Chapati</span>
+                    <span class="food-pill">🫓 Poori</span>
+                    <span class="food-pill">🍲 Sambar</span>
+                </div>
+            </div>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>AI Food Classifier Demo &bull; Local PyTorch + Flask Solution</p>
+        </footer>
+    </div>
+
+    <!-- Client-Side Instant Preview Script -->
+    <script>
+        const fileInput = document.getElementById('file-input');
+        const dropZone = document.getElementById('drop-zone');
+        const previewContainer = document.getElementById('preview-container');
+        const imagePreview = document.getElementById('image-preview');
+        const fileNameDisplay = document.getElementById('file-name-display');
+
+        fileInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    imagePreview.src = e.target.result;
+                    fileNameDisplay.textContent = `Selected File: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+                    previewContainer.style.display = 'block';
+                }
+                reader.readAsDataURL(file);
+            }
+        });
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropZone.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                dropZone.classList.add('dragover');
+            }, false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                dropZone.classList.remove('dragover');
+            }, false);
+        });
+    </script>
+</body>
+</html>

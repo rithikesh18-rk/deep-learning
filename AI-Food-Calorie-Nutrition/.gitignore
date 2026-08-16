@@ -1,0 +1,33 @@
+# Python Bytecode & Cache Files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+*.log
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+.env
+
+# Raw Datasets & Temporary Uploads (keep directory structure via .gitkeep)
+dataset/raw/*
+!dataset/raw/.gitkeep
+!dataset/raw/*/.gitkeep
+
+static/uploads/*
+!static/uploads/.gitkeep
+
+# Saved Models (Track trained checkpoints required for demo)
+!models/*.pth
+
+# IDEs & OS Metadata
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
