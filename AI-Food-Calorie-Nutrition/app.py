@@ -91,7 +91,9 @@ def predict():
 
 
 if __name__ == "__main__":
-    print(f"Starting AI Food Calorie & Nutrition Web Demo...")
+    port = int(os.environ.get("PORT", 5000))
+    host = os.environ.get("HOST", "0.0.0.0")
+    print(f"Starting AI Food Calorie & Nutrition Web Application...")
     print(f"Primary Model Checkpoint : {PRIMARY_MODEL_PATH}")
-    print(f"Server URL               : http://127.0.0.1:5000")
-    app.run(host="127.0.0.1", port=5000, debug=False)
+    print(f"Server URL               : http://{host}:{port}")
+    app.run(host=host, port=port, debug=False)
