@@ -18,6 +18,53 @@ from src.model import create_model
 from src.nutrition import get_nutrition_info
 
 
+_MODEL_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
+def get_loaded_model(model_path: Union[str, Path] = config.MODEL_PATH) -> Dict[str, Any]:
+    """
+    Loads and caches model instance in memory to avoid repeated disk I/O and RAM spikes.
+
+    Args:
+        model_path (Union[str, Path]): Path to trained checkpoint.
+
+    Returns:
+        Dict[str, Any]: Cached dictionary with 'model', 'class_names', 'image_size', 'device'.
+    """
+    model_path = Path(model_path).resolve()
+    key = str(model_path)
+
+    if key not in _MODEL_CACHE:
+        if not model_path.exists():
+            raise FileNotFoundError(f"Trained model checkpoint not found at path: '{model_path}'")
+
+        device = config.DEVICE
+
+        # Load checkpoint
+        checkpoint = torch.load(model_path, map_location=device)
+        class_names = checkpoint["class_names"]
+        model_name = checkpoint.get("model_name", config.MODEL_NAME)
+        image_size = checkpoint.get("image_size", config.IMAGE_SIZE)
+
+        # Reconstruct architecture and load weights
+        model = create_model(
+            num_classes=len(class_names),
+            model_name=model_name,
+            freeze_backbone=False
+        ).to(device)
+        model.load_state_dict(checkpoint["model_state_dict"])
+        model.eval()
+
+        _MODEL_CACHE[key] = {
+            "model": model,
+            "class_names": class_names,
+            "image_size": image_size,
+            "device": device
+        }
+
+    return _MODEL_CACHE[key]
+
+
 def predict_image(
     image_path: Union[str, Path],
     model_path: Union[str, Path] = config.MODEL_PATH
@@ -33,33 +80,14 @@ def predict_image(
         Dict[str, Any]: Dictionary containing food_name, confidence, serving_size, calories, protein, carbohydrates, fat.
     """
     image_path = Path(image_path)
-    model_path = Path(model_path)
-
     if not image_path.exists():
         raise FileNotFoundError(f"Input image not found at path: '{image_path}'")
 
-    if not model_path.exists():
-        raise FileNotFoundError(
-            f"Trained model checkpoint not found at path: '{model_path}'. "
-            "Please run 'python src/train.py' first after preparing your dataset."
-        )
-
-    device = config.DEVICE
-
-    # Load checkpoint
-    checkpoint = torch.load(model_path, map_location=device)
-    class_names = checkpoint["class_names"]
-    model_name = checkpoint.get("model_name", config.MODEL_NAME)
-    image_size = checkpoint.get("image_size", config.IMAGE_SIZE)
-
-    # Reconstruct model architecture and load trained weights
-    model = create_model(
-        num_classes=len(class_names),
-        model_name=model_name,
-        freeze_backbone=False
-    ).to(device)
-    model.load_state_dict(checkpoint["model_state_dict"])
-    model.eval()
+    model_data = get_loaded_model(model_path)
+    model = model_data["model"]
+    class_names = model_data["class_names"]
+    image_size = model_data["image_size"]
+    device = model_data["device"]
 
     # Preprocess single input image
     image_tensor = load_single_image(image_path=image_path, image_size=image_size).to(device)

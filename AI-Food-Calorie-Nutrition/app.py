@@ -12,7 +12,7 @@ from flask import Flask, render_template, request, redirect, url_for, flash
 from PIL import Image
 
 import src.config as config
-from src.predict import predict_image
+from src.predict import predict_image, get_loaded_model
 
 app = Flask(__name__)
 app.secret_key = "ai_food_calorie_nutrition_demo_secret_key"
@@ -27,6 +27,14 @@ ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 PRIMARY_MODEL_PATH = config.MODELS_DIR / "food_classifier_finetuned.pth"
 if not PRIMARY_MODEL_PATH.exists():
     PRIMARY_MODEL_PATH = config.MODELS_DIR / "food_classifier.pth"
+
+# Warm-up model in memory on app startup to prevent request latency and worker crashes
+try:
+    print(f"Pre-loading model into memory from: {PRIMARY_MODEL_PATH}")
+    get_loaded_model(PRIMARY_MODEL_PATH)
+    print("Model pre-loaded successfully.")
+except Exception as _e:
+    print(f"Warning: Model pre-loading failed: {_e}")
 
 
 def is_allowed_file(filename: str) -> bool:
