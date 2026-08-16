@@ -10,6 +10,14 @@ Tracking daily calorie and nutrient intake is important for health management. T
 
 ---
 
+## 🌐 Live Demo
+
+Experience the live application deployed on Render:
+
+[🚀 Live Demo](https://deep-learning-ap09.onrender.com/)
+
+---
+
 ## 🖼️ Demo Screenshots
 
 ### Homepage & Image Upload Interface
