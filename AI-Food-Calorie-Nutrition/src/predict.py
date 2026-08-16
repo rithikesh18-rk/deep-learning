@@ -18,12 +18,22 @@ from src.model import create_model
 from src.nutrition import get_nutrition_info
 
 
+# Limit PyTorch CPU thread allocation for memory & CPU efficiency on shared web hosts
+torch.set_num_threads(1)
+try:
+    torch.set_num_interop_threads(1)
+except Exception:
+    pass
+
+import threading
+
+_MODEL_LOCK = threading.Lock()
 _MODEL_CACHE: Dict[str, Dict[str, Any]] = {}
 
 
 def get_loaded_model(model_path: Union[str, Path] = config.MODEL_PATH) -> Dict[str, Any]:
     """
-    Loads and caches model instance in memory to avoid repeated disk I/O and RAM spikes.
+    Thread-safe lazy loading and memory caching of model instance.
 
     Args:
         model_path (Union[str, Path]): Path to trained checkpoint.
@@ -35,32 +45,34 @@ def get_loaded_model(model_path: Union[str, Path] = config.MODEL_PATH) -> Dict[s
     key = str(model_path)
 
     if key not in _MODEL_CACHE:
-        if not model_path.exists():
-            raise FileNotFoundError(f"Trained model checkpoint not found at path: '{model_path}'")
+        with _MODEL_LOCK:
+            if key not in _MODEL_CACHE:
+                if not model_path.exists():
+                    raise FileNotFoundError(f"Trained model checkpoint not found at path: '{model_path}'")
 
-        device = config.DEVICE
+                device = torch.device("cpu")
 
-        # Load checkpoint
-        checkpoint = torch.load(model_path, map_location=device)
-        class_names = checkpoint["class_names"]
-        model_name = checkpoint.get("model_name", config.MODEL_NAME)
-        image_size = checkpoint.get("image_size", config.IMAGE_SIZE)
+                # Load checkpoint
+                checkpoint = torch.load(model_path, map_location=device)
+                class_names = checkpoint["class_names"]
+                model_name = checkpoint.get("model_name", config.MODEL_NAME)
+                image_size = checkpoint.get("image_size", config.IMAGE_SIZE)
 
-        # Reconstruct architecture and load weights
-        model = create_model(
-            num_classes=len(class_names),
-            model_name=model_name,
-            freeze_backbone=False
-        ).to(device)
-        model.load_state_dict(checkpoint["model_state_dict"])
-        model.eval()
+                # Reconstruct architecture and load weights
+                model = create_model(
+                    num_classes=len(class_names),
+                    model_name=model_name,
+                    freeze_backbone=False
+                ).to(device)
+                model.load_state_dict(checkpoint["model_state_dict"])
+                model.eval()
 
-        _MODEL_CACHE[key] = {
-            "model": model,
-            "class_names": class_names,
-            "image_size": image_size,
-            "device": device
-        }
+                _MODEL_CACHE[key] = {
+                    "model": model,
+                    "class_names": class_names,
+                    "image_size": image_size,
+                    "device": device
+                }
 
     return _MODEL_CACHE[key]
 

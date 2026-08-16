@@ -28,13 +28,7 @@ PRIMARY_MODEL_PATH = config.MODELS_DIR / "food_classifier_finetuned.pth"
 if not PRIMARY_MODEL_PATH.exists():
     PRIMARY_MODEL_PATH = config.MODELS_DIR / "food_classifier.pth"
 
-# Warm-up model in memory on app startup to prevent request latency and worker crashes
-try:
-    print(f"Pre-loading model into memory from: {PRIMARY_MODEL_PATH}")
-    get_loaded_model(PRIMARY_MODEL_PATH)
-    print("Model pre-loaded successfully.")
-except Exception as _e:
-    print(f"Warning: Model pre-loading failed: {_e}")
+# Lazy singleton loading is handled automatically in src.predict on first request
 
 
 def is_allowed_file(filename: str) -> bool:
