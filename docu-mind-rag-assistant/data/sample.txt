@@ -1,0 +1,9 @@
+DocuMind RAG Assistant: Overview & Architecture
+
+DocuMind is an AI-powered document analysis and question-answering assistant designed for deep document understanding.
+
+Key Capabilities:
+1. Multi-format Document Ingestion: Supports PDFs, Markdown, and plain text files.
+2. Vector Indexing: Employs FAISS CPU vector stores with local HuggingFace embeddings (`sentence-transformers/all-MiniLM-L6-v2`) for high-speed semantic retrieval.
+3. Fast Inference: Integrates with Groq Cloud (`llama-3.1-8b-instant`) for ultra-low latency response generation and summarization.
+4. Interactive Streamlit Interface: Offers document upload, real-time chat, source attribution, and document summarization modes.

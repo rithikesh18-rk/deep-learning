@@ -1,0 +1,31 @@
+# Environment variables
+.env
+
+# Virtual Environment
+venv/
+.venv/
+env/
+ENV/
+
+# Python Cache & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Vector Store / FAISS indexes
+.faiss
+*.faiss
+*.pkl
+faiss_index/
+vector_store/
+
+# IDE & OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
