@@ -2,6 +2,7 @@
 
 <div align="center">
 
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://documind-rag-assistant.streamlit.app/)
 ![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11-blue.svg)
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.40+-FF4B4B.svg)
 ![LangChain](https://img.shields.io/badge/LangChain-0.3+-green.svg)
@@ -9,15 +10,31 @@
 ![FAISS](https://img.shields.io/badge/Vector%20Store-FAISS%20CPU-purple.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
+### 🌐 Live Cloud Demo: [documind-rag-assistant.streamlit.app](https://documind-rag-assistant.streamlit.app/)
+
 **High-Performance Document Intelligence, Multi-Format Vector Search, and Retrieval-Augmented Generation powered by LangChain and Groq Cloud.**
 
 </div>
 
 ---
 
+## 🌐 Try the Live Interactive Demo
+
+Experience DocuMind directly in your browser with zero local setup:
+
+👉 **[Launch DocuMind Streamlit Cloud App](https://documind-rag-assistant.streamlit.app/)**
+
+### How to use the Live Demo:
+1. **Provide Groq API Key:** Enter your [Groq Cloud API Key](https://console.groq.com/keys) (`gsk_...`) in the left sidebar control panel.
+2. **Upload Document:** Upload any PDF research paper, financial report, or technical specification (up to 25 MB).
+3. **Generate Summaries:** Switch to **"📝 Structured Summarization"** and choose between *Executive Summary*, *Technical Key Points*, *Action Items*, or *Comprehensive*.
+4. **Ask Grounded Questions:** Switch to **"💬 Interactive Document Q&A"** to query the document. Expand **"🔍 Retrieved Source Chunks & Page Numbers"** below any answer to inspect verifiable source provenance.
+
+---
+
 ## 📌 Overview
 
-**DocuMind RAG Assistant** is a production-ready Retrieval-Augmented Generation (RAG) system engineered for deep comprehension, precise Q&A, and structured summarization across complex document collections. By marrying dense vector embeddings via **FAISS** with the blazing-fast LPUs of **Groq Cloud** (`llama-3.1-8b-instant`), DocuMind achieves sub-second context retrieval and generation while strictly preventing hallucinations.
+**DocuMind RAG Assistant** is a production-ready Retrieval-Augmented Generation (RAG) system engineered for deep comprehension, precise Q&A, and structured summarization across complex document collections. By marrying dense vector embeddings via **FAISS** with the blazing-fast LPUs of **Groq Cloud**, DocuMind achieves sub-second context retrieval and generation while strictly preventing hallucinations.
 
 ---
 
