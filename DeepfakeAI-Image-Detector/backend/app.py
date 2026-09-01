@@ -94,11 +94,13 @@ CHECKPOINT_CANDIDATES = [
     str(PROJECT_ROOT / "backend" / "models" / "deepfake_detector_improved.pth"),
     str(CWD / "backend" / "models" / "deepfake_detector_improved.pth"),
     str(CWD / "models" / "deepfake_detector_improved.pth"),
+    str(CWD / "DeepfakeAI-Image-Detector" / "backend" / "models" / "deepfake_detector_improved.pth"),
     str(BASE_DIR / "models" / "deepfake_detector_best.pth"),
     str(PROJECT_ROOT / "backend" / "models" / "deepfake_detector_best.pth"),
     str(BASE_DIR / "models" / "deepfake_detector.pth"),
     "models/deepfake_detector_improved.pth",
     "backend/models/deepfake_detector_improved.pth",
+    "DeepfakeAI-Image-Detector/backend/models/deepfake_detector_improved.pth",
     "models/deepfake_detector_best.pth",
     "backend/models/deepfake_detector_best.pth",
 ]

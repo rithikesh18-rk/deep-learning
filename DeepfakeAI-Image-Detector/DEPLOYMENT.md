@@ -24,22 +24,28 @@ flowchart LR
 
 ## 1. Backend Deployment (Render)
 
-### Method A: Manual Web Service Setup (Recommended)
+### Configuration for Monorepo Setup (Recommended)
 1. Log in to [Render Dashboard](https://dashboard.render.com/).
 2. Click **New +** $\to$ **Web Service**.
-3. Connect your GitHub repository: `DeepfakeAI-Image Detector`.
+3. Connect your GitHub repository: `https://github.com/rithikesh18-rk/deep-learning`.
 4. Configure the service settings:
 
-| Setting | Value |
-| :--- | :--- |
-| **Name** | `deepfake-detector-api` |
-| **Region** | `Oregon (US West)` or nearest region |
-| **Branch** | `main` |
-| **Root Directory** | Leave blank (root of repository) |
-| **Runtime** | `Python 3` |
-| **Build Command** | `pip install --upgrade pip && pip install -r backend/requirements.txt` |
-| **Start Command** | `uvicorn app:app --app-dir backend --host 0.0.0.0 --port $PORT` |
-| **Health Check Path** | `/api/v1/health` |
+| Setting | Value | Note |
+| :--- | :--- | :--- |
+| **Name** | `deepfake-detector-api` | Or any unique name |
+| **Region** | `Oregon (US West)` | Or nearest region |
+| **Branch** | `main` | Production branch |
+| **Root Directory** | `DeepfakeAI-Image-Detector` | **Important:** Subfolder in the monorepo |
+| **Runtime** | `Python 3` | Python 3.11.x runtime |
+| **Build Command** | `pip install --upgrade pip && pip install -r backend/requirements.txt` | Installs dependencies from `backend/requirements.txt` |
+| **Start Command** | `uvicorn app:app --app-dir backend --host 0.0.0.0 --port $PORT` | **Ensure it starts with `uvicorn` (not `vicorn`)** |
+| **Health Check Path** | `/api/v1/health` | Automated uptime health check |
+
+> [!IMPORTANT]
+> **Check the Start Command Spelling**:
+> Ensure the command is typed exactly as:
+> `uvicorn app:app --app-dir backend --host 0.0.0.0 --port $PORT`
+> (Do not accidentally truncate the leading `u`).
 
 5. Add the following **Environment Variables** in the Render Dashboard:
 
@@ -49,13 +55,15 @@ flowchart LR
 | `CHECKPOINT_PATH` | `backend/models/deepfake_detector_improved.pth` | Explicit path to the trained improved model |
 | `CORS_ORIGINS` | `https://your-frontend-app.vercel.app,http://localhost:5173` | Allowed frontend origins (comma-separated) |
 
-6. Click **Create Web Service**.
+6. Click **Create Web Service** (or **Manual Deploy** $\to$ **Clear build cache & deploy**).
 7. Note down your production Render URL (e.g. `https://deepfake-detector-api.onrender.com`).
 
 ---
 
-### Method B: Render Blueprint Deployment
-The repository includes a ready-to-use [`render.yaml`](file:///c:/Users/rithikesh%2077/Downloads/RK%20Projects/deep-learning/DeepfakeAI-Image%20Detector/render.yaml). You can simply click **New +** $\to$ **Blueprint** on Render and select this repository.
+### Alternative: Root Directory Left Blank
+If you leave the **Root Directory** empty in Render settings:
+- **Build Command**: `pip install --upgrade pip && pip install -r DeepfakeAI-Image-Detector/backend/requirements.txt`
+- **Start Command**: `uvicorn app:app --app-dir DeepfakeAI-Image-Detector/backend --host 0.0.0.0 --port $PORT`
 
 ---
 
@@ -63,13 +71,13 @@ The repository includes a ready-to-use [`render.yaml`](file:///c:/Users/rithikes
 
 1. Log in to [Vercel Dashboard](https://vercel.com/).
 2. Click **Add New...** $\to$ **Project**.
-3. Import your GitHub repository: `DeepfakeAI-Image Detector`.
+3. Import your GitHub repository: `https://github.com/rithikesh18-rk/deep-learning`.
 4. Configure the project settings:
 
 | Setting | Value |
 | :--- | :--- |
 | **Framework Preset** | `Vite` |
-| **Root Directory** | `frontend` |
+| **Root Directory** | `DeepfakeAI-Image-Detector/frontend` |
 | **Build Command** | `npm run build` |
 | **Output Directory** | `dist` |
 | **Install Command** | `npm install` |
@@ -100,7 +108,7 @@ curl -X GET https://deepfake-detector-api.onrender.com/api/v1/health
   "model_loaded": true,
   "model_type": "DualStreamForensicNet (ConvNeXt-Tiny + 2D-FFT)",
   "checkpoint_loaded": true,
-  "checkpoint_path": "/opt/render/project/src/backend/models/deepfake_detector_improved.pth",
+  "checkpoint_path": "/opt/render/project/src/DeepfakeAI-Image-Detector/backend/models/deepfake_detector_improved.pth",
   "model_status": "trained_checkpoint_loaded",
   "device": "cpu"
 }
@@ -140,7 +148,7 @@ To run the full stack locally:
 
 ```bash
 # Terminal 1: Backend
-.\backend\venv\Scripts\uvicorn app:app --app-dir backend --host 127.0.0.1 --port 8000
+.\backend\venv\Scripts\uvicorn app:app --app-dir backend --host 0.0.0.0 --port 8000
 
 # Terminal 2: Frontend
 cd frontend
