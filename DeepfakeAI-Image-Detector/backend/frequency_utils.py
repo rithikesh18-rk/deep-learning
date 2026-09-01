@@ -10,14 +10,10 @@ import numpy as np
 import cv2
 from PIL import Image
 import torch
-import torchvision.transforms as transforms
 
-
-# Standard ImageNet normalization for Spatial ConvNeXt Backbone
-RGB_NORMALIZE = transforms.Normalize(
-    mean=[0.485, 0.456, 0.406],
-    std=[0.229, 0.224, 0.225]
-)
+# Standard ImageNet normalization tensors for Spatial ConvNeXt Backbone (Pure PyTorch, 0 extra memory)
+IMAGENET_MEAN = torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32).view(1, 3, 1, 1)
+IMAGENET_STD = torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32).view(1, 3, 1, 1)
 
 
 def letterbox_image(
@@ -157,8 +153,9 @@ def preprocess_rgb_image(image_bytes: bytes) -> torch.Tensor:
     """
     pil_img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     letterboxed = letterbox_image(pil_img, target_size=(224, 224))
-    to_tensor = transforms.ToTensor()
-    tensor = RGB_NORMALIZE(to_tensor(letterboxed)).unsqueeze(0)
+    np_img = np.array(letterboxed, dtype=np.float32) / 255.0
+    tensor = torch.from_numpy(np_img).permute(2, 0, 1).unsqueeze(0)
+    tensor = (tensor - IMAGENET_MEAN) / IMAGENET_STD
     return tensor
 
 

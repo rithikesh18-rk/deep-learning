@@ -52,19 +52,19 @@ from frequency_utils import (
 device = torch.device("cpu")
 logger.info("[SPECTRA INIT 3/7] Using compute device: %s", device)
 
-# 3. Initialize DualStreamForensicNet ONCE with pretrained=False (no redundant network/ImageNet weights)
-logger.info("[SPECTRA INIT 4/7] Instantiating DualStreamForensicNet (pretrained=False)...")
+# 3. Instantiate DualStreamForensicNet on META device (0 MB RAM allocated until weights are assigned)
+logger.info("[SPECTRA INIT 4/7] Instantiating DualStreamForensicNet on zero-memory meta device...")
 try:
-    forensic_model = DualStreamForensicNet(pretrained=False).to(device)
-    forensic_model.eval()
+    with torch.device("meta"):
+        forensic_model = DualStreamForensicNet(pretrained=False)
     model_instantiated = True
-    logger.info("[SPECTRA INIT 4/7] DualStreamForensicNet architecture created successfully.")
+    logger.info("[SPECTRA INIT 4/7] DualStreamForensicNet meta-architecture created (0 duplicate memory).")
 except Exception as e:
     forensic_model = None
     model_instantiated = False
     logger.error("[SPECTRA INIT 4/7 ERROR] Failed to instantiate DualStreamForensicNet: %s", e)
 
-# 4. Production Checkpoint Search & Loading
+# 4. Production Checkpoint Search & In-Place Weight Assignment
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
 CWD = Path.cwd()
@@ -95,9 +95,8 @@ logger.info("[SPECTRA INIT 5/7] Searching for active trained checkpoint...")
 for candidate in CHECKPOINT_CANDIDATES:
     if candidate and Path(candidate).is_file():
         try:
-            logger.info("[SPECTRA INIT 5/7] Found candidate checkpoint: %s (loading with mmap=True)...", candidate)
+            logger.info("[SPECTRA INIT 5/7] Found candidate checkpoint: %s (loading to CPU)...", candidate)
             try:
-                # mmap=True maps tensor storage directly without huge heap allocation copies
                 checkpoint = torch.load(candidate, map_location=device, weights_only=False, mmap=True)
             except Exception:
                 checkpoint = torch.load(candidate, map_location=device, weights_only=False)
@@ -115,10 +114,12 @@ for candidate in CHECKPOINT_CANDIDATES:
                 state_dict = checkpoint.state_dict()
 
             if forensic_model is not None:
-                forensic_model.load_state_dict(state_dict, strict=False)
+                # Direct in-place tensor assignment from disk buffers (zero duplicate RAM allocations)
+                forensic_model.load_state_dict(state_dict, assign=True)
+                forensic_model.eval()
                 checkpoint_loaded = True
                 loaded_checkpoint_path = str(Path(candidate).resolve())
-                logger.info("[SPECTRA INIT 6/7] [PRODUCTION MODEL ACTIVE] Successfully loaded weights from: %s", candidate)
+                logger.info("[SPECTRA INIT 6/7] [PRODUCTION MODEL ACTIVE] Successfully assigned weights from: %s", candidate)
 
                 # Immediately delete temporary checkpoint dictionary and collect garbage
                 del checkpoint
@@ -131,7 +132,7 @@ for candidate in CHECKPOINT_CANDIDATES:
 
 if checkpoint_loaded:
     model_status = "trained_checkpoint_loaded"
-    logger.info("[SPECTRA INIT 7/7] Model ready for inference with trained weights.")
+    logger.info("[SPECTRA INIT 7/7] Model ready for inference on CPU with trained weights.")
 else:
     model_status = "untrained_weights_using_frequency_forensics"
     logger.warning(
