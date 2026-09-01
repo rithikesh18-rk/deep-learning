@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: deepfake-detector-api
+    runtime: python
+    buildCommand: "pip install --upgrade pip && pip install -r backend/requirements.txt"
+    startCommand: "uvicorn app:app --app-dir backend --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.8"
+      - key: CHECKPOINT_PATH
+        value: "backend/models/deepfake_detector_improved.pth"
+      - key: CORS_ORIGINS
+        value: "http://localhost:5173,http://127.0.0.1:5173"

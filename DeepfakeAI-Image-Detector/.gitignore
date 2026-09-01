@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+backend/venv/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+backend/venv/
+
+# Large Training Checkpoints with Optimizer States (>300MB)
+backend/models/training_checkpoint_latest.pth
+*.pth.tar
+
+# Dataset (raw training & validation partitions)
+dataset/train/
+dataset/val/
+dataset/test/
+
+# Logs & Temporary Files
+*.log
+*.sqlite3
+.cache/
+.pytest_cache/
+
+# Node & Frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+*.local
+.env.local
+.env.*.local
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
