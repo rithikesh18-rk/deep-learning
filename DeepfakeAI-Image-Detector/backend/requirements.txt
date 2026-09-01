@@ -7,6 +7,5 @@ scipy
 fastapi
 uvicorn[standard]
 python-multipart
-grad-cam
 pillow
 httpx

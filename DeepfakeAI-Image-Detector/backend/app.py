@@ -1,3 +1,9 @@
+"""FastAPI Inference Service for Deepfake & Synthetic AI-Image Detection.
+
+Provides endpoints for dual-stream spatial + frequency image analysis,
+2D-FFT spectrum visualization, and Grad-CAM explainability heatmaps.
+"""
+
 import os
 import sys
 import io
@@ -5,16 +11,27 @@ import gc
 import base64
 import hashlib
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
 # Ensure backend directory is in sys.path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# Set up logging early
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
+logger = logging.getLogger("spectra_backend")
+
+logger.info("[SPECTRA INIT 1/7] Application module import started.")
+
 import torch
-# Set PyTorch CPU thread counts conservatively before model initialization for cloud container deployment (Render 512MB RAM)
+# 1. Set PyTorch CPU thread counts conservatively BEFORE any model creation for cloud container stability
 torch.set_num_threads(1)
 torch.set_num_interop_threads(1)
+logger.info("[SPECTRA INIT 2/7] PyTorch CPU threads restricted to 1 (num_threads=1, num_interop_threads=1).")
 
 import numpy as np
 import cv2
@@ -31,14 +48,113 @@ from frequency_utils import (
     load_image_from_bytes,
 )
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("spectra_backend")
+# 2. Force CPU inference device
+device = torch.device("cpu")
+logger.info("[SPECTRA INIT 3/7] Using compute device: %s", device)
 
+# 3. Initialize DualStreamForensicNet ONCE with pretrained=False (no redundant network/ImageNet weights)
+logger.info("[SPECTRA INIT 4/7] Instantiating DualStreamForensicNet (pretrained=False)...")
+try:
+    forensic_model = DualStreamForensicNet(pretrained=False).to(device)
+    forensic_model.eval()
+    model_instantiated = True
+    logger.info("[SPECTRA INIT 4/7] DualStreamForensicNet architecture created successfully.")
+except Exception as e:
+    forensic_model = None
+    model_instantiated = False
+    logger.error("[SPECTRA INIT 4/7 ERROR] Failed to instantiate DualStreamForensicNet: %s", e)
+
+# 4. Production Checkpoint Search & Loading
+BASE_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = BASE_DIR.parent
+CWD = Path.cwd()
+
+CHECKPOINT_CANDIDATES = [
+    os.environ.get("CHECKPOINT_PATH"),
+    str(BASE_DIR / "models" / "deepfake_detector_improved.pth"),
+    str(PROJECT_ROOT / "backend" / "models" / "deepfake_detector_improved.pth"),
+    str(CWD / "backend" / "models" / "deepfake_detector_improved.pth"),
+    str(CWD / "models" / "deepfake_detector_improved.pth"),
+    str(CWD / "DeepfakeAI-Image-Detector" / "backend" / "models" / "deepfake_detector_improved.pth"),
+    str(BASE_DIR / "models" / "deepfake_detector_best.pth"),
+    str(PROJECT_ROOT / "backend" / "models" / "deepfake_detector_best.pth"),
+    str(BASE_DIR / "models" / "deepfake_detector.pth"),
+    "models/deepfake_detector_improved.pth",
+    "backend/models/deepfake_detector_improved.pth",
+    "DeepfakeAI-Image-Detector/backend/models/deepfake_detector_improved.pth",
+    "models/deepfake_detector_best.pth",
+    "backend/models/deepfake_detector_best.pth",
+]
+
+checkpoint_loaded = False
+loaded_checkpoint_path: Optional[str] = None
+model_type = "DualStreamForensicNet (ConvNeXt-Tiny + 2D-FFT)"
+
+logger.info("[SPECTRA INIT 5/7] Searching for active trained checkpoint...")
+
+for candidate in CHECKPOINT_CANDIDATES:
+    if candidate and Path(candidate).is_file():
+        try:
+            logger.info("[SPECTRA INIT 5/7] Found candidate checkpoint: %s (loading with mmap=True)...", candidate)
+            try:
+                # mmap=True maps tensor storage directly without huge heap allocation copies
+                checkpoint = torch.load(candidate, map_location=device, weights_only=False, mmap=True)
+            except Exception:
+                checkpoint = torch.load(candidate, map_location=device, weights_only=False)
+
+            if isinstance(checkpoint, dict):
+                if "state_dict" in checkpoint:
+                    state_dict = checkpoint["state_dict"]
+                elif "model_state_dict" in checkpoint:
+                    state_dict = checkpoint["model_state_dict"]
+                elif "model" in checkpoint:
+                    state_dict = checkpoint["model"]
+                else:
+                    state_dict = checkpoint
+            else:
+                state_dict = checkpoint.state_dict()
+
+            if forensic_model is not None:
+                forensic_model.load_state_dict(state_dict, strict=False)
+                checkpoint_loaded = True
+                loaded_checkpoint_path = str(Path(candidate).resolve())
+                logger.info("[SPECTRA INIT 6/7] [PRODUCTION MODEL ACTIVE] Successfully loaded weights from: %s", candidate)
+
+                # Immediately delete temporary checkpoint dictionary and collect garbage
+                del checkpoint
+                del state_dict
+                gc.collect()
+                logger.info("[SPECTRA INIT 6/7] Checkpoint temporary objects released & garbage collected.")
+                break
+        except Exception as e:
+            logger.warning("[SPECTRA INIT 5/7] Could not load checkpoint from %s: %s", candidate, e)
+
+if checkpoint_loaded:
+    model_status = "trained_checkpoint_loaded"
+    logger.info("[SPECTRA INIT 7/7] Model ready for inference with trained weights.")
+else:
+    model_status = "untrained_weights_using_frequency_forensics"
+    logger.warning(
+        "[SPECTRA INIT 7/7 WARNING] No trained checkpoint found. Operating in fallback frequency-domain forensic mode."
+    )
+
+
+# Lifespan Context Manager
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("[SPECTRA LIFESPAN] Application startup event triggered.")
+    logger.info("[SPECTRA LIFESPAN] Active checkpoint: %s", loaded_checkpoint_path)
+    logger.info("[SPECTRA LIFESPAN] Health check endpoint ready at /api/v1/health")
+    yield
+    logger.info("[SPECTRA LIFESPAN] Application shutdown completed.")
+
+
+# FastAPI Application Instance
 app = FastAPI(
     title="SPECTRA AI Image Forensics Backend",
     description="Dual-stream spatial and frequency deepfake detection service",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # Production & Local CORS Configuration
@@ -67,88 +183,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Force CPU inference for Render memory stability
-device = torch.device("cpu")
-logger.info("Using compute device: %s (single-threaded CPU mode)", device)
-
-# Initialize DualStreamForensicNet once at startup (pretrained=False prevents duplicate weight allocations)
-try:
-    forensic_model = DualStreamForensicNet(pretrained=False).to(device)
-    forensic_model.eval()
-    model_instantiated = True
-    logger.info("DualStreamForensicNet instantiated successfully.")
-except Exception as e:
-    forensic_model = None
-    model_instantiated = False
-    logger.error("Failed to instantiate DualStreamForensicNet: %s", e)
-
-# Production Checkpoint Loader
-BASE_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = BASE_DIR.parent
-CWD = Path.cwd()
-
-CHECKPOINT_CANDIDATES = [
-    os.environ.get("CHECKPOINT_PATH"),
-    str(BASE_DIR / "models" / "deepfake_detector_improved.pth"),
-    str(PROJECT_ROOT / "backend" / "models" / "deepfake_detector_improved.pth"),
-    str(CWD / "backend" / "models" / "deepfake_detector_improved.pth"),
-    str(CWD / "models" / "deepfake_detector_improved.pth"),
-    str(CWD / "DeepfakeAI-Image-Detector" / "backend" / "models" / "deepfake_detector_improved.pth"),
-    str(BASE_DIR / "models" / "deepfake_detector_best.pth"),
-    str(PROJECT_ROOT / "backend" / "models" / "deepfake_detector_best.pth"),
-    str(BASE_DIR / "models" / "deepfake_detector.pth"),
-    "models/deepfake_detector_improved.pth",
-    "backend/models/deepfake_detector_improved.pth",
-    "DeepfakeAI-Image-Detector/backend/models/deepfake_detector_improved.pth",
-    "models/deepfake_detector_best.pth",
-    "backend/models/deepfake_detector_best.pth",
-]
-
-checkpoint_loaded = False
-loaded_checkpoint_path: Optional[str] = None
-model_type = "DualStreamForensicNet (ConvNeXt-Tiny + 2D-FFT)"
-
-for candidate in CHECKPOINT_CANDIDATES:
-    if candidate and Path(candidate).is_file():
-        try:
-            logger.info("Attempting to load checkpoint from: %s", candidate)
-            try:
-                checkpoint = torch.load(candidate, map_location=device, weights_only=False)
-            except TypeError:
-                checkpoint = torch.load(candidate, map_location=device)
-            if isinstance(checkpoint, dict):
-                if "state_dict" in checkpoint:
-                    state_dict = checkpoint["state_dict"]
-                elif "model_state_dict" in checkpoint:
-                    state_dict = checkpoint["model_state_dict"]
-                elif "model" in checkpoint:
-                    state_dict = checkpoint["model"]
-                else:
-                    state_dict = checkpoint
-            else:
-                state_dict = checkpoint.state_dict()
-
-            if forensic_model is not None:
-                forensic_model.load_state_dict(state_dict, strict=False)
-                checkpoint_loaded = True
-                loaded_checkpoint_path = str(Path(candidate).resolve())
-                logger.info("[PRODUCTION MODEL ACTIVE] Successfully loaded weights from: %s", candidate)
-                # Immediately release checkpoint dictionary and collect garbage to free memory
-                del checkpoint
-                del state_dict
-                gc.collect()
-                break
-        except Exception as e:
-            logger.warning("Could not load checkpoint from %s: %s", candidate, e)
-
-if checkpoint_loaded:
-    model_status = "trained_checkpoint_loaded"
-else:
-    model_status = "untrained_weights_using_frequency_forensics"
-    logger.warning(
-        "[WARNING] No trained checkpoint found. Operating in fallback frequency-domain forensic mode."
-    )
-
 
 def generate_gradcam_overlay(
     model: torch.nn.Module,
@@ -157,7 +191,11 @@ def generate_gradcam_overlay(
     original_bgr: np.ndarray,
     target_class: int = 1,
 ) -> str:
-    """Computes genuine Grad-CAM activation heatmap on ConvNeXt spatial backbone."""
+    """Computes genuine Grad-CAM activation heatmap on ConvNeXt spatial backbone.
+    
+    Grad-CAM is executed ONLY on-demand per request, and all temporary graph tensors
+    are freed immediately in the finally block.
+    """
     activations = []
     gradients = []
 
@@ -320,7 +358,7 @@ async def analyze_image(file: UploadFile = File(...)):
             detail=f"Forensic metrics computation failed: {str(e)}"
         )
 
-    # 6. Model Inference & Probability Determination
+    # 6. Model Inference & Probability Determination (Inference Mode with zero autograd tracking)
     if checkpoint_loaded and forensic_model is not None:
         try:
             with torch.inference_mode():
@@ -344,7 +382,7 @@ async def analyze_image(file: UploadFile = File(...)):
         verdict = forensic_result["verdict"]
         artifact_flags = forensic_result.get("artifact_flags", [])
 
-    # 7. Generate genuine Grad-CAM explainability heatmap on ConvNeXt-Tiny
+    # 7. Generate genuine Grad-CAM explainability heatmap on ConvNeXt-Tiny (On-demand only)
     gradcam_heatmap_base64 = None
     if forensic_model is not None:
         try:
@@ -362,7 +400,7 @@ async def analyze_image(file: UploadFile = File(...)):
 
     metrics_data = forensic_result.get("metrics", {})
 
-    # Debug telemetry logging per request
+    # Telemetry logging per request
     logger.info(
         "\n--- [ANALYZE REQUEST] ---"
         "\nfilename: %s | size: %d bytes | sha256: %s"
@@ -383,6 +421,7 @@ async def analyze_image(file: UploadFile = File(...)):
         artifact_flags
     )
 
+    # Immediately release per-request tensors and image arrays
     del rgb_tensor, freq_tensor, contents, img_bgr
 
     return {
