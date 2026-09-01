@@ -1,12 +1,7 @@
-"""FastAPI Inference Service for Deepfake & Synthetic AI-Image Detection.
-
-Provides endpoints for dual-stream spatial + frequency image analysis,
-2D-FFT spectrum visualization, and Grad-CAM explainability heatmaps.
-"""
-
 import os
 import sys
 import io
+import gc
 import base64
 import hashlib
 import logging
@@ -16,10 +11,14 @@ from typing import Optional
 # Ensure backend directory is in sys.path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import torch
+# Set PyTorch CPU thread counts conservatively before model initialization for cloud container deployment (Render 512MB RAM)
+torch.set_num_threads(1)
+torch.set_num_interop_threads(1)
+
 import numpy as np
 import cv2
 from PIL import Image
-import torch
 import torch.nn.functional as F
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -68,13 +67,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Device Configuration
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-logger.info("Using compute device: %s", device)
+# Force CPU inference for Render memory stability
+device = torch.device("cpu")
+logger.info("Using compute device: %s (single-threaded CPU mode)", device)
 
-# Initialize DualStreamForensicNet once at startup
+# Initialize DualStreamForensicNet once at startup (pretrained=False prevents duplicate weight allocations)
 try:
-    forensic_model = DualStreamForensicNet(pretrained=True).to(device)
+    forensic_model = DualStreamForensicNet(pretrained=False).to(device)
     forensic_model.eval()
     model_instantiated = True
     logger.info("DualStreamForensicNet instantiated successfully.")
@@ -134,6 +133,10 @@ for candidate in CHECKPOINT_CANDIDATES:
                 checkpoint_loaded = True
                 loaded_checkpoint_path = str(Path(candidate).resolve())
                 logger.info("[PRODUCTION MODEL ACTIVE] Successfully loaded weights from: %s", candidate)
+                # Immediately release checkpoint dictionary and collect garbage to free memory
+                del checkpoint
+                del state_dict
+                gc.collect()
                 break
         except Exception as e:
             logger.warning("Could not load checkpoint from %s: %s", candidate, e)
@@ -171,11 +174,16 @@ def generate_gradcam_overlay(
     f_handle = target_layer.register_forward_hook(forward_hook)
     b_handle = target_layer.register_full_backward_hook(backward_hook)
 
+    rgb_var = None
+    freq_var = None
+    logits = None
+    target_score = None
+
     try:
         rgb_var = rgb_tensor.clone().detach().to(device).requires_grad_(True)
         freq_var = freq_tensor.clone().detach().to(device)
 
-        model.zero_grad()
+        model.zero_grad(set_to_none=True)
         logits = model(rgb_var, freq_var)
 
         target_score = logits[0, target_class]
@@ -199,6 +207,8 @@ def generate_gradcam_overlay(
             cam = torch.zeros_like(cam)
 
         cam_np = cam.squeeze().detach().cpu().numpy()
+        del act, grad, weights, cam
+
         h, w = original_bgr.shape[:2]
         cam_resized = cv2.resize(cam_np, (w, h), interpolation=cv2.INTER_LINEAR)
 
@@ -217,6 +227,10 @@ def generate_gradcam_overlay(
     finally:
         f_handle.remove()
         b_handle.remove()
+        model.zero_grad(set_to_none=True)
+        del rgb_var, freq_var, logits, target_score
+        activations.clear()
+        gradients.clear()
 
 
 @app.get("/")
@@ -270,12 +284,12 @@ async def analyze_image(file: UploadFile = File(...)):
         logger.error("Image decode error: %s", e)
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid image format or decoding error: {str(e)}"
+            detail="Failed to decode uploaded image. Unsupported or corrupted format."
         )
 
     img_h, img_w = img_bgr.shape[:2]
 
-    # 3. Extract 2D-FFT spectrum and spectrum tensor via frequency_utils
+    # 3. Extract 2D Fast Fourier Transform log-magnitude spectrum
     try:
         freq_tensor, fft_spectrum_base64 = extract_fft_spectrum(contents)
         freq_tensor = freq_tensor.to(device)
@@ -309,7 +323,7 @@ async def analyze_image(file: UploadFile = File(...)):
     # 6. Model Inference & Probability Determination
     if checkpoint_loaded and forensic_model is not None:
         try:
-            with torch.no_grad():
+            with torch.inference_mode():
                 logits = forensic_model(rgb_tensor, freq_tensor)
                 probs = torch.softmax(logits, dim=-1)
                 ai_prob = float(probs[0, 1].item() * 100.0)
@@ -368,6 +382,8 @@ async def analyze_image(file: UploadFile = File(...)):
         metrics_data.get("r_squared", 0.0),
         artifact_flags
     )
+
+    del rgb_tensor, freq_tensor, contents, img_bgr
 
     return {
         "verdict": verdict,
