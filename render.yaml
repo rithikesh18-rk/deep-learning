@@ -12,4 +12,4 @@ services:
       - key: CHECKPOINT_PATH
         value: "backend/models/deepfake_detector_improved.pth"
       - key: CORS_ORIGINS
-        value: "http://localhost:5173,http://127.0.0.1:5173"
+        value: "*"
