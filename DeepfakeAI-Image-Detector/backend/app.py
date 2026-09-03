@@ -166,6 +166,7 @@ default_origins = [
     "http://127.0.0.1:3000",
     "http://localhost:8000",
     "http://127.0.0.1:8000",
+    "https://frontend-six-gold-14.vercel.app",
 ]
 
 env_cors = os.environ.get("CORS_ORIGINS") or os.environ.get("FRONTEND_URL")
