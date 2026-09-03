@@ -81,7 +81,7 @@ export default function App() {
 
     try {
       const response = await axios.post(API_ENDPOINTS.ANALYZE, formData, {
-        timeout: 30000
+        timeout: 60000
       });
 
       if (response.data) {

@@ -15,25 +15,41 @@ export default function Header({ onReset, analysisResult }) {
   const [backendStatus, setBackendStatus] = useState({ online: false, latency: null });
 
   useEffect(() => {
+    let isMounted = true;
+
     const checkHealth = async () => {
       const startTime = performance.now();
       try {
-        const res = await axios.get(API_ENDPOINTS.HEALTH, { timeout: 4000 });
+        let res = null;
+        try {
+          res = await axios.get(API_ENDPOINTS.HEALTH, { timeout: 10000 });
+        } catch (hErr) {
+          // Fallback to root endpoint if /api/v1/health has transient failure
+          res = await axios.get(API_ENDPOINTS.ROOT, { timeout: 10000 });
+        }
+
         const endTime = performance.now();
-        if (res.status === 200) {
+        if (isMounted && res && res.status === 200) {
           setBackendStatus({
             online: true,
             latency: Math.round(endTime - startTime)
           });
+        } else if (isMounted) {
+          setBackendStatus({ online: false, latency: null });
         }
       } catch (err) {
-        setBackendStatus({ online: false, latency: null });
+        if (isMounted) {
+          setBackendStatus({ online: false, latency: null });
+        }
       }
     };
 
     checkHealth();
-    const interval = setInterval(checkHealth, 10000);
-    return () => clearInterval(interval);
+    const interval = setInterval(checkHealth, 8000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, []);
 
   const handleExportJSON = () => {
