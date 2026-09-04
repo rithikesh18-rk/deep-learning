@@ -142,6 +142,8 @@ for candidate in CHECKPOINT_CANDIDATES:
                 # Direct in-place tensor assignment from disk buffers (zero duplicate RAM allocations)
                 forensic_model.load_state_dict(state_dict, assign=True)
                 forensic_model.eval()
+                for p in forensic_model.parameters():
+                    p.requires_grad = False
                 checkpoint_loaded = True
                 loaded_checkpoint_path = str(Path(candidate).resolve())
                 logger.info("[SPECTRA INIT 6/7] [PRODUCTION MODEL ACTIVE] Successfully assigned weights from: %s", candidate)
@@ -220,45 +222,38 @@ def generate_gradcam_overlay(
 ) -> str:
     """Computes genuine Grad-CAM activation heatmap on ConvNeXt spatial backbone.
     
-    Grad-CAM is executed ONLY on-demand per request, and all temporary graph tensors
-    are freed immediately in the finally block.
+    Uses an isolated leaf forward hook so autograd tracks ONLY from the leaf tensor
+    forward through the classifier, consuming zero parameter gradient memory
+    and maintaining minimal RAM consumption on Render's 512MB environment.
     """
     activations = []
-    gradients = []
 
     target_layer = model.spatial_backbone.stages[-1].blocks[-1]
 
     def forward_hook(module, inp, output):
         activations.clear()
-        activations.append(output)
+        leaf = output.detach().clone().requires_grad_(True)
+        activations.append(leaf)
+        return leaf
 
-    def backward_hook(module, grad_in, grad_out):
-        gradients.clear()
-        gradients.append(grad_out[0])
-
-    f_handle = target_layer.register_forward_hook(forward_hook)
-    b_handle = target_layer.register_full_backward_hook(backward_hook)
-
-    rgb_var = None
-    freq_var = None
-    logits = None
-    target_score = None
+    handle = target_layer.register_forward_hook(forward_hook)
 
     try:
-        rgb_var = rgb_tensor.clone().detach().to(device).requires_grad_(True)
-        freq_var = freq_tensor.clone().detach().to(device)
+        rgb_var = rgb_tensor.to(device)
+        freq_var = freq_tensor.to(device)
 
-        model.zero_grad(set_to_none=True)
         logits = model(rgb_var, freq_var)
 
         target_score = logits[0, target_class]
         target_score.backward()
 
-        if not activations or not gradients:
-            raise RuntimeError("Failed to capture activations or gradients for Grad-CAM.")
+        if not activations:
+            raise RuntimeError("Failed to capture activations for Grad-CAM.")
 
         act = activations[0]
-        grad = gradients[0]
+        grad = act.grad
+        if grad is None:
+            raise RuntimeError("Grad-CAM gradient was not computed.")
 
         # Channel-wise global average pooling of gradients
         weights = torch.mean(grad, dim=(2, 3), keepdim=True)
@@ -290,12 +285,9 @@ def generate_gradcam_overlay(
 
         return f"data:image/png;base64,{base64.b64encode(buffer).decode('utf-8')}"
     finally:
-        f_handle.remove()
-        b_handle.remove()
-        model.zero_grad(set_to_none=True)
-        del rgb_var, freq_var, logits, target_score
+        handle.remove()
         activations.clear()
-        gradients.clear()
+        gc.collect()
 
 
 @app.get("/")
