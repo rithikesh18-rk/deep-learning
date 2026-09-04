@@ -90,6 +90,31 @@ checkpoint_loaded = False
 loaded_checkpoint_path: Optional[str] = None
 model_type = "DualStreamForensicNet (ConvNeXt-Tiny + 2D-FFT)"
 
+def ensure_local_checkpoint(target_file: Path):
+    """Ensures real trained model weights are on disk if file is missing, < 50MB, or LFS pointer."""
+    MIN_SIZE = 50 * 1024 * 1024
+    if target_file.exists() and target_file.stat().st_size >= MIN_SIZE:
+        return
+    try:
+        import urllib.request
+        logger.info("[SPECTRA CHECKPOINT] Checkpoint missing or LFS pointer (< 50MB) at %s. Downloading genuine weights...", target_file)
+        target_file.parent.mkdir(parents=True, exist_ok=True)
+        temp_file = target_file.with_suffix(".tmp")
+        url = "https://media.githubusercontent.com/media/rithikesh18-rk/deep-learning/main/DeepfakeAI-Image-Detector/backend/models/deepfake_detector_improved.pth"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=180) as resp, open(temp_file, "wb") as f:
+            while True:
+                chunk = resp.read(1024 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
+        temp_file.replace(target_file)
+        logger.info("[SPECTRA CHECKPOINT] Download complete: %s (%d bytes).", target_file, target_file.stat().st_size)
+    except Exception as exc:
+        logger.error("[SPECTRA CHECKPOINT ERROR] Failed to download checkpoint: %s", exc)
+
+ensure_local_checkpoint(BASE_DIR / "models" / "deepfake_detector_improved.pth")
+
 logger.info("[SPECTRA INIT 5/7] Searching for active trained checkpoint...")
 
 for candidate in CHECKPOINT_CANDIDATES:
