@@ -8,6 +8,8 @@ import os
 import sys
 import io
 import gc
+import time
+import uuid
 import base64
 import hashlib
 import logging
@@ -53,7 +55,7 @@ from frequency_utils import (
 device = torch.device("cpu")
 logger.info("[SPECTRA INIT 3/7] Using compute device: %s", device)
 
-# Global inference lock to guarantee single-flight, thread-safe model access per request
+# Global single-flight inference lock: ensures serialized, race-free model execution
 INFERENCE_LOCK = asyncio.Lock()
 
 # 3. Instantiate DualStreamForensicNet on META device (0 MB RAM allocated until weights are assigned)
@@ -223,8 +225,9 @@ def generate_gradcam_overlay(
     freq_tensor: torch.Tensor,
     original_bgr: np.ndarray,
     target_class: int = 1,
+    req_id: str = "unknown"
 ) -> Optional[str]:
-    """Computes genuine Grad-CAM activation heatmap on ConvNeXt spatial backbone.
+    """Computes Grad-CAM activation heatmap with strict lifecycle and bounded memory.
     
     Guarantees hook removal, parameter gradient clearing, and bounded overlay dimensions
     to prevent memory accumulation and cumulative state leakage across requests.
@@ -248,18 +251,17 @@ def generate_gradcam_overlay(
         freq_var = freq_tensor.to(device)
 
         logits = model(rgb_var, freq_var)
-
         target_score = logits[0, target_class]
         target_score.backward()
 
         if not activations:
-            logger.warning("[GRAD-CAM] No activations captured.")
+            logger.warning("[%s] [GRAD-CAM] No activations captured.", req_id)
             return None
 
         act = activations[0]
         grad = act.grad
         if grad is None:
-            logger.warning("[GRAD-CAM] Gradient not computed on leaf tensor.")
+            logger.warning("[%s] [GRAD-CAM] Gradient not computed on leaf tensor.", req_id)
             return None
 
         # Channel-wise global average pooling of gradients
@@ -301,7 +303,7 @@ def generate_gradcam_overlay(
 
         return f"data:image/png;base64,{base64.b64encode(buffer).decode('utf-8')}"
     except Exception as ex:
-        logger.warning("[GRAD-CAM ERROR] Failed to generate overlay: %s", ex, exc_info=True)
+        logger.warning("[%s] [GRAD-CAM ERROR] Failed to generate overlay: %s", req_id, ex, exc_info=True)
         return None
     finally:
         try:
@@ -328,6 +330,7 @@ async def root():
 
 @app.get("/api/v1/health")
 async def health_check():
+    """Lightweight health/readiness check that returns instant status without running inference."""
     return {
         "status": "healthy",
         "model_loaded": model_instantiated,
@@ -341,27 +344,46 @@ async def health_check():
 
 @app.post("/api/v1/analyze")
 async def analyze_image(file: UploadFile = File(...)):
+    req_id = uuid.uuid4().hex[:8]
+    t_start = time.perf_counter()
+    filename = file.filename or "unknown"
+    content_type = file.content_type or "application/octet-stream"
+
+    logger.info(
+        "[%s] [REQUEST_START] Ingestion started: filename='%s', content_type='%s', start_time=%.4f",
+        req_id, filename, content_type, t_start
+    )
+
+    # Acquire single-flight lock: guarantees isolated sequential execution through model
     async with INFERENCE_LOCK:
         rgb_tensor = None
         freq_tensor = None
         img_bgr = None
         contents = None
+        fft_spectrum_base64 = None
+        gradcam_heatmap_base64 = None
+        http_status = 500
 
         try:
             # 1. Validate file ingestion
             contents = await file.read()
-            if not contents or len(contents) < 32:
+            file_size = len(contents) if contents else 0
+
+            logger.info("[%s] [INGESTED] File size=%d bytes", req_id, file_size)
+
+            if not contents or file_size < 32:
+                http_status = 400
                 raise HTTPException(status_code=400, detail="Uploaded image file is empty or corrupted.")
 
             MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50 MB
-            if len(contents) > MAX_UPLOAD_SIZE:
+            if file_size > MAX_UPLOAD_SIZE:
+                http_status = 413
                 raise HTTPException(
                     status_code=413,
-                    detail=f"Uploaded image exceeds maximum payload size of 50MB (received {len(contents)/(1024*1024):.1f}MB)."
+                    detail=f"Uploaded image exceeds maximum payload size of 50MB (received {file_size/(1024*1024):.1f}MB)."
                 )
 
             file_sha256 = hashlib.sha256(contents).hexdigest()
-            filename = file.filename or "unknown"
 
             # 2. Decode raw image into BGR numpy array with safety resize cap
             try:
@@ -378,7 +400,8 @@ async def analyze_image(file: UploadFile = File(...)):
                         interpolation=cv2.INTER_AREA
                     )
             except Exception as e:
-                logger.error("Image decode error: %s", e)
+                http_status = 400
+                logger.error("[%s] Image decode error: %s", req_id, e)
                 raise HTTPException(
                     status_code=400,
                     detail="Failed to decode uploaded image. Unsupported or corrupted format."
@@ -391,7 +414,8 @@ async def analyze_image(file: UploadFile = File(...)):
                 freq_tensor, fft_spectrum_base64 = extract_fft_spectrum(contents)
                 freq_tensor = freq_tensor.to(device)
             except Exception as e:
-                logger.error("FFT spectrum extraction error: %s", e)
+                http_status = 500
+                logger.error("[%s] FFT spectrum extraction error: %s", req_id, e)
                 raise HTTPException(
                     status_code=500,
                     detail=f"Frequency domain transformation failed: {str(e)}"
@@ -401,7 +425,8 @@ async def analyze_image(file: UploadFile = File(...)):
             try:
                 rgb_tensor = preprocess_rgb_image(contents).to(device)
             except Exception as e:
-                logger.error("RGB preprocessing error: %s", e)
+                http_status = 500
+                logger.error("[%s] RGB preprocessing error: %s", req_id, e)
                 raise HTTPException(
                     status_code=500,
                     detail=f"Spatial preprocessing failed: {str(e)}"
@@ -411,7 +436,8 @@ async def analyze_image(file: UploadFile = File(...)):
             try:
                 forensic_result = compute_frequency_forensic_metrics(img_bgr)
             except Exception as e:
-                logger.error("Forensic metrics calculation error: %s", e)
+                http_status = 500
+                logger.error("[%s] Forensic metrics calculation error: %s", req_id, e)
                 raise HTTPException(
                     status_code=500,
                     detail=f"Forensic metrics computation failed: {str(e)}"
@@ -430,7 +456,7 @@ async def analyze_image(file: UploadFile = File(...)):
                     verdict = "AI-GENERATED" if ai_probability >= 50.0 else "AUTHENTIC SENSOR CAPTURE"
                     artifact_flags = forensic_result.get("artifact_flags", [])
                 except Exception as e:
-                    logger.error("Neural model forward pass error: %s", e)
+                    logger.error("[%s] Neural model forward pass error: %s", req_id, e)
                     ai_probability = forensic_result["ai_probability"]
                     confidence = forensic_result["confidence"]
                     verdict = forensic_result["verdict"]
@@ -442,8 +468,13 @@ async def analyze_image(file: UploadFile = File(...)):
                 verdict = forensic_result["verdict"]
                 artifact_flags = forensic_result.get("artifact_flags", [])
 
+            t_infer = time.perf_counter()
+            logger.info(
+                "[%s] [INFERENCE_COMPLETE] Verdict=%s, ai_probability=%.2f%%, inference_latency=%.3fs",
+                req_id, verdict, ai_probability, (t_infer - t_start)
+            )
+
             # 7. Generate genuine Grad-CAM explainability heatmap on ConvNeXt-Tiny (On-demand only)
-            gradcam_heatmap_base64 = None
             if forensic_model is not None:
                 try:
                     target_class = 1 if ai_probability >= 50.0 else 0
@@ -453,21 +484,22 @@ async def analyze_image(file: UploadFile = File(...)):
                         freq_tensor=freq_tensor,
                         original_bgr=img_bgr,
                         target_class=target_class,
+                        req_id=req_id
                     )
                 except Exception as e:
-                    logger.warning("Grad-CAM generation failed: %s", e)
+                    logger.warning("[%s] Grad-CAM generation failed: %s", req_id, e)
                     gradcam_heatmap_base64 = None
 
             metrics_data = forensic_result.get("metrics", {})
+            http_status = 200
 
-            # Telemetry logging per request
+            t_end = time.perf_counter()
             logger.info(
-                "\n--- [ANALYZE REQUEST COMPLETE] ---"
+                "[%s] [HTTP_STATUS_%d] Analysis completed in %.3fs"
                 "\nfilename: %s | size: %d bytes | sha256: %s"
-                "\ndimensions: %dx%d (HxW)"
-                "\nverdict: %s | ai_probability: %.2f%% | confidence: %.2f%%"
-                "\n----------------------------------",
-                filename, len(contents), file_sha256[:16],
+                "\ndimensions: %dx%d (HxW) | verdict: %s | prob: %.2f%% | conf: %.2f%%",
+                req_id, http_status, (t_end - t_start),
+                filename, file_size, file_sha256[:16],
                 img_h, img_w,
                 verdict, ai_probability, confidence
             )
@@ -482,12 +514,16 @@ async def analyze_image(file: UploadFile = File(...)):
                 "model_status": model_status,
                 "checkpoint_loaded": checkpoint_loaded,
                 "metrics": metrics_data,
+                "request_id": req_id,
             }
 
-        except HTTPException:
+        except HTTPException as http_exc:
+            http_status = http_exc.status_code
+            logger.warning("[%s] [HTTP_STATUS_%d] HTTPException: %s", req_id, http_status, http_exc.detail)
             raise
         except Exception as exc:
-            logger.exception("Unexpected exception in analyze_image: %s", exc)
+            http_status = 500
+            logger.exception("[%s] [HTTP_STATUS_500] Unexpected exception in analyze_image: %s", req_id, exc)
             raise HTTPException(
                 status_code=500,
                 detail=f"Image analysis failed: {str(exc)}"
@@ -499,5 +535,6 @@ async def analyze_image(file: UploadFile = File(...)):
                     forensic_model.eval()
                 except Exception:
                     pass
-            del rgb_tensor, freq_tensor, img_bgr, contents
+            del rgb_tensor, freq_tensor, img_bgr, contents, fft_spectrum_base64, gradcam_heatmap_base64
             gc.collect()
+            logger.info("[%s] [CLEANUP_COMPLETE] All request-specific buffers and tensors released (HTTP %d)", req_id, http_status)
