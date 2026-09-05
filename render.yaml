@@ -2,8 +2,7 @@ services:
   - type: web
     name: deepfake-detector-api
     runtime: python
-    rootDir: DeepfakeAI-Image-Detector
-    buildCommand: "pip install --upgrade pip && (test -f backend/requirements.txt && pip install -r backend/requirements.txt || pip install -r requirements.txt) && (python backend/download_model.py || true)"
+    buildCommand: "pip install --upgrade pip && (test -f backend/requirements.txt && pip install -r backend/requirements.txt || pip install -r DeepfakeAI-Image-Detector/backend/requirements.txt || pip install -r requirements.txt) && (python backend/download_model.py || python DeepfakeAI-Image-Detector/backend/download_model.py || true)"
     startCommand: "uvicorn app:app --app-dir backend --host 0.0.0.0 --port $PORT"
     healthCheckPath: /api/v1/health
     envVars:
