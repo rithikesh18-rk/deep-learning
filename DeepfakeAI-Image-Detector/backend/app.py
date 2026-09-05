@@ -11,6 +11,7 @@ import gc
 import base64
 import hashlib
 import logging
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -51,6 +52,9 @@ from frequency_utils import (
 # 2. Force CPU inference device
 device = torch.device("cpu")
 logger.info("[SPECTRA INIT 3/7] Using compute device: %s", device)
+
+# Global inference lock to guarantee single-flight, thread-safe model access per request
+INFERENCE_LOCK = asyncio.Lock()
 
 # 3. Instantiate DualStreamForensicNet on META device (0 MB RAM allocated until weights are assigned)
 logger.info("[SPECTRA INIT 4/7] Instantiating DualStreamForensicNet on zero-memory meta device...")
@@ -219,15 +223,13 @@ def generate_gradcam_overlay(
     freq_tensor: torch.Tensor,
     original_bgr: np.ndarray,
     target_class: int = 1,
-) -> str:
+) -> Optional[str]:
     """Computes genuine Grad-CAM activation heatmap on ConvNeXt spatial backbone.
     
-    Uses an isolated leaf forward hook so autograd tracks ONLY from the leaf tensor
-    forward through the classifier, consuming zero parameter gradient memory
-    and maintaining minimal RAM consumption on Render's 512MB environment.
+    Guarantees hook removal, parameter gradient clearing, and bounded overlay dimensions
+    to prevent memory accumulation and cumulative state leakage across requests.
     """
     activations = []
-
     target_layer = model.spatial_backbone.stages[-1].blocks[-1]
 
     def forward_hook(module, inp, output):
@@ -239,6 +241,9 @@ def generate_gradcam_overlay(
     handle = target_layer.register_forward_hook(forward_hook)
 
     try:
+        model.eval()
+        model.zero_grad(set_to_none=True)
+
         rgb_var = rgb_tensor.to(device)
         freq_var = freq_tensor.to(device)
 
@@ -248,12 +253,14 @@ def generate_gradcam_overlay(
         target_score.backward()
 
         if not activations:
-            raise RuntimeError("Failed to capture activations for Grad-CAM.")
+            logger.warning("[GRAD-CAM] No activations captured.")
+            return None
 
         act = activations[0]
         grad = act.grad
         if grad is None:
-            raise RuntimeError("Grad-CAM gradient was not computed.")
+            logger.warning("[GRAD-CAM] Gradient not computed on leaf tensor.")
+            return None
 
         # Channel-wise global average pooling of gradients
         weights = torch.mean(grad, dim=(2, 3), keepdim=True)
@@ -267,26 +274,43 @@ def generate_gradcam_overlay(
             cam = torch.zeros_like(cam)
 
         cam_np = cam.squeeze().detach().cpu().numpy()
-        del act, grad, weights, cam
 
+        # Bounded overlay dimensions (max 800px) to prevent large-image RAM spikes on Render
         h, w = original_bgr.shape[:2]
-        cam_resized = cv2.resize(cam_np, (w, h), interpolation=cv2.INTER_LINEAR)
+        max_dim = 800
+        if max(h, w) > max_dim:
+            scale = max_dim / max(h, w)
+            target_w, target_h = int(round(w * scale)), int(round(h * scale))
+            bgr_base = cv2.resize(original_bgr, (target_w, target_h), interpolation=cv2.INTER_AREA)
+        else:
+            target_w, target_h = w, h
+            bgr_base = original_bgr
+
+        cam_resized = cv2.resize(cam_np, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
 
         heatmap = cv2.applyColorMap(np.uint8(255 * cam_resized), cv2.COLORMAP_JET)
         heatmap_rgb = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
-        original_rgb = cv2.cvtColor(original_bgr, cv2.COLOR_BGR2RGB)
+        original_rgb = cv2.cvtColor(bgr_base, cv2.COLOR_BGR2RGB)
 
         overlay = cv2.addWeighted(original_rgb, 0.6, heatmap_rgb, 0.4, 0)
         overlay_bgr = cv2.cvtColor(overlay, cv2.COLOR_RGB2BGR)
 
         success, buffer = cv2.imencode('.png', overlay_bgr)
         if not success:
-            raise RuntimeError("Failed to encode Grad-CAM overlay image.")
+            return None
 
         return f"data:image/png;base64,{base64.b64encode(buffer).decode('utf-8')}"
+    except Exception as ex:
+        logger.warning("[GRAD-CAM ERROR] Failed to generate overlay: %s", ex, exc_info=True)
+        return None
     finally:
-        handle.remove()
+        try:
+            handle.remove()
+        except Exception:
+            pass
         activations.clear()
+        model.zero_grad(set_to_none=True)
+        model.eval()
         gc.collect()
 
 
@@ -295,7 +319,7 @@ async def root():
     return {
         "status": "online",
         "service": "AI Image Detector Backend",
-        "architecture": "DualStreamForensicNet (ConvNeXt-Tiny + 2D-FFT)",
+        "architecture": model_type,
         "checkpoint_loaded": checkpoint_loaded,
         "checkpoint_path": loaded_checkpoint_path,
         "model_status": model_status,
@@ -317,140 +341,163 @@ async def health_check():
 
 @app.post("/api/v1/analyze")
 async def analyze_image(file: UploadFile = File(...)):
-    # 1. Validate file ingestion
-    contents = await file.read()
-    if not contents or len(contents) < 32:
-        raise HTTPException(status_code=400, detail="Uploaded image file is empty or corrupted.")
+    async with INFERENCE_LOCK:
+        rgb_tensor = None
+        freq_tensor = None
+        img_bgr = None
+        contents = None
 
-    MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50 MB
-    if len(contents) > MAX_UPLOAD_SIZE:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Uploaded image exceeds maximum payload size of 50MB (received {len(contents)/(1024*1024):.1f}MB)."
-        )
-
-    file_sha256 = hashlib.sha256(contents).hexdigest()
-    filename = file.filename or "unknown"
-
-    # 2. Decode raw image into BGR numpy array
-    try:
-        img_bgr = load_image_from_bytes(contents)
-        if img_bgr is None or img_bgr.size == 0:
-            raise ValueError("Failed to decode image data into pixels.")
-    except Exception as e:
-        logger.error("Image decode error: %s", e)
-        raise HTTPException(
-            status_code=400,
-            detail="Failed to decode uploaded image. Unsupported or corrupted format."
-        )
-
-    img_h, img_w = img_bgr.shape[:2]
-
-    # 3. Extract 2D Fast Fourier Transform log-magnitude spectrum
-    try:
-        freq_tensor, fft_spectrum_base64 = extract_fft_spectrum(contents)
-        freq_tensor = freq_tensor.to(device)
-    except Exception as e:
-        logger.error("FFT spectrum extraction error: %s", e)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Frequency domain transformation failed: {str(e)}"
-        )
-
-    # 4. Preprocess RGB image for spatial backbone
-    try:
-        rgb_tensor = preprocess_rgb_image(contents).to(device)
-    except Exception as e:
-        logger.error("RGB preprocessing error: %s", e)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Spatial preprocessing failed: {str(e)}"
-        )
-
-    # 5. Compute dynamic deterministic frequency and noise residual forensic metrics
-    try:
-        forensic_result = compute_frequency_forensic_metrics(img_bgr)
-    except Exception as e:
-        logger.error("Forensic metrics calculation error: %s", e)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Forensic metrics computation failed: {str(e)}"
-        )
-
-    # 6. Model Inference & Probability Determination (Inference Mode with zero autograd tracking)
-    if checkpoint_loaded and forensic_model is not None:
         try:
-            with torch.inference_mode():
-                logits = forensic_model(rgb_tensor, freq_tensor)
-                probs = torch.softmax(logits, dim=-1)
-                ai_prob = float(probs[0, 1].item() * 100.0)
-            ai_probability = round(ai_prob, 2)
-            confidence = round(max(ai_probability, 100.0 - ai_probability), 2)
-            verdict = "AI-GENERATED" if ai_probability >= 50.0 else "AUTHENTIC SENSOR CAPTURE"
-            artifact_flags = forensic_result.get("artifact_flags", [])
-        except Exception as e:
-            logger.error("Neural model forward pass error: %s", e)
-            ai_probability = forensic_result["ai_probability"]
-            confidence = forensic_result["confidence"]
-            verdict = forensic_result["verdict"]
-            artifact_flags = forensic_result.get("artifact_flags", [])
-    else:
-        # Transparently use calibrated frequency and noise residual forensic analysis
-        ai_probability = forensic_result["ai_probability"]
-        confidence = forensic_result["confidence"]
-        verdict = forensic_result["verdict"]
-        artifact_flags = forensic_result.get("artifact_flags", [])
+            # 1. Validate file ingestion
+            contents = await file.read()
+            if not contents or len(contents) < 32:
+                raise HTTPException(status_code=400, detail="Uploaded image file is empty or corrupted.")
 
-    # 7. Generate genuine Grad-CAM explainability heatmap on ConvNeXt-Tiny (On-demand only)
-    gradcam_heatmap_base64 = None
-    if forensic_model is not None:
-        try:
-            target_class = 1 if ai_probability >= 50.0 else 0
-            gradcam_heatmap_base64 = generate_gradcam_overlay(
-                model=forensic_model,
-                rgb_tensor=rgb_tensor,
-                freq_tensor=freq_tensor,
-                original_bgr=img_bgr,
-                target_class=target_class,
-            )
-        except Exception as e:
-            logger.warning("Grad-CAM generation failed: %s", e)
+            MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50 MB
+            if len(contents) > MAX_UPLOAD_SIZE:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Uploaded image exceeds maximum payload size of 50MB (received {len(contents)/(1024*1024):.1f}MB)."
+                )
+
+            file_sha256 = hashlib.sha256(contents).hexdigest()
+            filename = file.filename or "unknown"
+
+            # 2. Decode raw image into BGR numpy array with safety resize cap
+            try:
+                img_bgr = load_image_from_bytes(contents)
+                if img_bgr is None or img_bgr.size == 0:
+                    raise ValueError("Failed to decode image data into pixels.")
+                # Cap decoded image dimensions to prevent memory exhaustion on high-resolution camera photos
+                h, w = img_bgr.shape[:2]
+                if max(h, w) > 1280:
+                    scale = 1280.0 / max(h, w)
+                    img_bgr = cv2.resize(
+                        img_bgr,
+                        (int(round(w * scale)), int(round(h * scale))),
+                        interpolation=cv2.INTER_AREA
+                    )
+            except Exception as e:
+                logger.error("Image decode error: %s", e)
+                raise HTTPException(
+                    status_code=400,
+                    detail="Failed to decode uploaded image. Unsupported or corrupted format."
+                )
+
+            img_h, img_w = img_bgr.shape[:2]
+
+            # 3. Extract 2D Fast Fourier Transform log-magnitude spectrum
+            try:
+                freq_tensor, fft_spectrum_base64 = extract_fft_spectrum(contents)
+                freq_tensor = freq_tensor.to(device)
+            except Exception as e:
+                logger.error("FFT spectrum extraction error: %s", e)
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Frequency domain transformation failed: {str(e)}"
+                )
+
+            # 4. Preprocess RGB image for spatial backbone
+            try:
+                rgb_tensor = preprocess_rgb_image(contents).to(device)
+            except Exception as e:
+                logger.error("RGB preprocessing error: %s", e)
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Spatial preprocessing failed: {str(e)}"
+                )
+
+            # 5. Compute dynamic deterministic frequency and noise residual forensic metrics
+            try:
+                forensic_result = compute_frequency_forensic_metrics(img_bgr)
+            except Exception as e:
+                logger.error("Forensic metrics calculation error: %s", e)
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Forensic metrics computation failed: {str(e)}"
+                )
+
+            # 6. Model Inference & Probability Determination (Inference Mode with zero autograd tracking)
+            if checkpoint_loaded and forensic_model is not None:
+                try:
+                    forensic_model.eval()
+                    with torch.inference_mode():
+                        logits = forensic_model(rgb_tensor, freq_tensor)
+                        probs = torch.softmax(logits, dim=-1)
+                        ai_prob = float(probs[0, 1].item() * 100.0)
+                    ai_probability = round(ai_prob, 2)
+                    confidence = round(max(ai_probability, 100.0 - ai_probability), 2)
+                    verdict = "AI-GENERATED" if ai_probability >= 50.0 else "AUTHENTIC SENSOR CAPTURE"
+                    artifact_flags = forensic_result.get("artifact_flags", [])
+                except Exception as e:
+                    logger.error("Neural model forward pass error: %s", e)
+                    ai_probability = forensic_result["ai_probability"]
+                    confidence = forensic_result["confidence"]
+                    verdict = forensic_result["verdict"]
+                    artifact_flags = forensic_result.get("artifact_flags", [])
+            else:
+                # Transparently use calibrated frequency and noise residual forensic analysis
+                ai_probability = forensic_result["ai_probability"]
+                confidence = forensic_result["confidence"]
+                verdict = forensic_result["verdict"]
+                artifact_flags = forensic_result.get("artifact_flags", [])
+
+            # 7. Generate genuine Grad-CAM explainability heatmap on ConvNeXt-Tiny (On-demand only)
             gradcam_heatmap_base64 = None
+            if forensic_model is not None:
+                try:
+                    target_class = 1 if ai_probability >= 50.0 else 0
+                    gradcam_heatmap_base64 = generate_gradcam_overlay(
+                        model=forensic_model,
+                        rgb_tensor=rgb_tensor,
+                        freq_tensor=freq_tensor,
+                        original_bgr=img_bgr,
+                        target_class=target_class,
+                    )
+                except Exception as e:
+                    logger.warning("Grad-CAM generation failed: %s", e)
+                    gradcam_heatmap_base64 = None
 
-    metrics_data = forensic_result.get("metrics", {})
+            metrics_data = forensic_result.get("metrics", {})
 
-    # Telemetry logging per request
-    logger.info(
-        "\n--- [ANALYZE REQUEST] ---"
-        "\nfilename: %s | size: %d bytes | sha256: %s"
-        "\ndimensions: %dx%d (HxW)"
-        "\nverdict: %s | ai_probability: %.2f%% | confidence: %.2f%%"
-        "\npeak_zscore: %.2f | top_1pct_diff: %.2f dB"
-        "\ngrid_spike_score: %.1f | smooth_patch_ratio: %.2f | r_squared: %.3f"
-        "\nartifact_flags: %s"
-        "\n-------------------------",
-        filename, len(contents), file_sha256[:16],
-        img_h, img_w,
-        verdict, ai_probability, confidence,
-        metrics_data.get("peak_zscore", 0.0),
-        metrics_data.get("top_1pct_diff", 0.0),
-        metrics_data.get("grid_spike_score", 0.0),
-        metrics_data.get("smooth_patch_ratio", 0.0),
-        metrics_data.get("r_squared", 0.0),
-        artifact_flags
-    )
+            # Telemetry logging per request
+            logger.info(
+                "\n--- [ANALYZE REQUEST COMPLETE] ---"
+                "\nfilename: %s | size: %d bytes | sha256: %s"
+                "\ndimensions: %dx%d (HxW)"
+                "\nverdict: %s | ai_probability: %.2f%% | confidence: %.2f%%"
+                "\n----------------------------------",
+                filename, len(contents), file_sha256[:16],
+                img_h, img_w,
+                verdict, ai_probability, confidence
+            )
 
-    # Immediately release per-request tensors and image arrays
-    del rgb_tensor, freq_tensor, contents, img_bgr
+            return {
+                "verdict": verdict,
+                "ai_probability": ai_probability,
+                "confidence": confidence,
+                "artifact_flags": artifact_flags,
+                "fft_spectrum_base64": fft_spectrum_base64,
+                "gradcam_heatmap_base64": gradcam_heatmap_base64,
+                "model_status": model_status,
+                "checkpoint_loaded": checkpoint_loaded,
+                "metrics": metrics_data,
+            }
 
-    return {
-        "verdict": verdict,
-        "ai_probability": ai_probability,
-        "confidence": confidence,
-        "artifact_flags": artifact_flags,
-        "fft_spectrum_base64": fft_spectrum_base64,
-        "gradcam_heatmap_base64": gradcam_heatmap_base64,
-        "model_status": model_status,
-        "checkpoint_loaded": checkpoint_loaded,
-        "metrics": metrics_data,
-    }
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("Unexpected exception in analyze_image: %s", exc)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Image analysis failed: {str(exc)}"
+            )
+        finally:
+            if forensic_model is not None:
+                try:
+                    forensic_model.zero_grad(set_to_none=True)
+                    forensic_model.eval()
+                except Exception:
+                    pass
+            del rgb_tensor, freq_tensor, img_bgr, contents
+            gc.collect()

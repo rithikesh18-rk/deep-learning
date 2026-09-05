@@ -167,6 +167,7 @@ export default function ScannerZone({ onFileSelect, onError, isAnalyzing, select
           onChange={(e) => {
             if (e.target.files && e.target.files[0]) {
               const file = e.target.files[0];
+              e.target.value = '';
               if (file.type.startsWith('image/')) {
                 onFileSelect(file);
               } else if (onError) {
