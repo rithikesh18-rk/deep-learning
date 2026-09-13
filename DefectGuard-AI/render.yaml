@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: defectguard-api
+    runtime: python
+    rootDir: DefectGuard-AI
+    buildCommand: "pip install --upgrade pip && pip install -r requirements.txt && python download_index.py"
+    startCommand: "uvicorn api:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.8"
+      - key: CORS_ORIGINS
+        value: "*"
+      - key: INDEX_DOWNLOAD_URL
+        value: "https://github.com/rithikesh18-rk/deep-learning/releases/download/v1.0.0/bottle_patchcore.index"

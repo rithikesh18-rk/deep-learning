@@ -5,6 +5,11 @@ env/
 ENV/
 .env
 .env.*
+!.env.example
+
+# Frontend build artifacts
+frontend/dist/
+frontend/node_modules/
 
 # Python Bytecode & Cache
 __pycache__/

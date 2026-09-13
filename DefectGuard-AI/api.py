@@ -5,6 +5,7 @@ Designed for Stitch MCP frontend integration.
 """
 
 import io
+import os
 import time
 import base64
 from pathlib import Path
@@ -66,10 +67,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Enable CORS for all origins, methods, and headers
+# Configure CORS origins from environment variable (supports comma-separated list or wildcard)
+cors_origins_env = os.environ.get("CORS_ORIGINS", "*").strip()
+if cors_origins_env == "*":
+    allow_origins = ["*"]
+else:
+    allow_origins = [origin.strip() for origin in cors_origins_env.split(",") if origin.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -101,15 +108,25 @@ async def root(request: Request):
             "docs": "/docs",
             "inspect_endpoint": "/api/inspect",
         })
-    if INDEX_HTML_PATH.exists():
-        return HTMLResponse(content=INDEX_HTML_PATH.read_text(encoding="utf-8"))
+    for candidate in [
+        INDEX_HTML_PATH,
+        ROOT_DIR / "frontend" / "dist" / "index.html",
+        ROOT_DIR / "frontend" / "index.html",
+    ]:
+        if candidate.exists():
+            return HTMLResponse(content=candidate.read_text(encoding="utf-8"))
     return HTMLResponse("<h1>DefectGuard AI Visual Inspection Service</h1>")
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard():
-    if INDEX_HTML_PATH.exists():
-        return HTMLResponse(content=INDEX_HTML_PATH.read_text(encoding="utf-8"))
+    for candidate in [
+        INDEX_HTML_PATH,
+        ROOT_DIR / "frontend" / "dist" / "index.html",
+        ROOT_DIR / "frontend" / "index.html",
+    ]:
+        if candidate.exists():
+            return HTMLResponse(content=candidate.read_text(encoding="utf-8"))
     return HTMLResponse("<h1>Dashboard HTML not found</h1>")
 
 
@@ -118,7 +135,11 @@ async def get_sample_image(category: str):
     """Provides sample test images for one-click testing in UI."""
     sample_map = {
         "broken_large": ROOT_DIR / "data" / "bottle" / "test" / "broken_large" / "000.png",
-        "broken_small": ROOT_DIR / "data" / "bottle" / "test" / "broken_small" / "000.png",
+        "broken_small": (
+            ROOT_DIR / "data" / "bottle" / "test" / "broken_small" / "000.png"
+            if (ROOT_DIR / "data" / "bottle" / "test" / "broken_small" / "000.png").exists()
+            else ROOT_DIR / "data" / "bottle" / "test" / "broken_large" / "broken_small" / "000.png"
+        ),
         "contamination": ROOT_DIR / "data" / "bottle" / "test" / "contamination" / "000.png",
         "good": ROOT_DIR / "data" / "bottle" / "test" / "good" / "000.png",
     }
@@ -282,4 +303,5 @@ async def inspect_image(
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("api:app", host="0.0.0.0", port=port)
