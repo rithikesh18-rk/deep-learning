@@ -72,27 +72,35 @@ DefectGuard AI addresses the cold-start challenge in industrial automated optica
 
 ## 📁 Project Structure
 
-`
+```
 DefectGuard-AI/
-├── api.py                      # FastAPI REST inference service & UI host
-├── build_index.py              # Memory bank builder & FAISS vector indexer
-├── calibrate_threshold.py      # Threshold calibration & score distribution analysis
-├── setup_data.py               # MVTec AD dataset download & directory setup
-├── index.html                  # Cyber-Industrial Visual QA web dashboard
-├── requirements.txt            # Python dependencies
+├── api.py
+├── build_index.py
+├── calibrate_threshold.py
+├── setup_data.py
+├── index.html
+├── requirements.txt
 ├── configs/
-│   └── config.yaml             # Model, dataset, and server configuration
+│   └── config.yaml
 ├── src/
-│   ├── feature_extractor.py    # WideResNet-50-2 token extraction & foreground segmentation
-│   ├── memory_bank.py          # PatchCore FAISS memory bank & anomaly scoring engine
-│   └── coreset.py              # Greedy k-Center subsampling implementation
+│   ├── feature_extractor.py
+│   ├── memory_bank.py
+│   └── coreset.py
 ├── models/
-│   ├── bottle_patchcore_meta.json      # Feature metadata & dimension specs
-│   └── threshold_calibration.json     # Calibrated score statistics
+│   ├── bottle_patchcore_meta.json
+│   └── threshold_calibration.json
 └── data/
-    ├── bottle/                 # MVTec AD bottle dataset partitions
-    └── test_results/           # Verified localization test artifacts
-`
+    ├── bottle/
+    └── test_results/
+```
+
+- **api.py** – FastAPI REST inference service and application host
+- **build_index.py** – Builds the PatchCore memory bank and FAISS index
+- **calibrate_threshold.py** – Calibrates anomaly detection thresholds
+- **setup_data.py** – Dataset setup and preparation
+- **src/** – Core feature extraction, memory bank, and coreset logic
+- **models/** – Model metadata and calibration files
+- **data/** – Dataset and verified test artifacts
 
 ---
 
