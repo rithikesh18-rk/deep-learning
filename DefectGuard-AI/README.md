@@ -1,4 +1,4 @@
-﻿# DefectGuard AI
+# DefectGuard AI
 
 ### Cyber-Industrial Visual QA System
 
