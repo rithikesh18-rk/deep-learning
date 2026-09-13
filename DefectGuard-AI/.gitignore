@@ -1,0 +1,31 @@
+# Environments & Virtual Envs
+.venv/
+venv/
+env/
+ENV/
+.env
+.env.*
+
+# Python Bytecode & Cache
+__pycache__/
+*.py[cod]
+*.class
+*.so
+.pytest_cache/
+
+# Large FAISS Index Binary (Generated via python build_index.py)
+models/*.index
+*.index
+
+# Archives & Temporary files
+*.tar.xz
+*.tar.gz
+*.zip
+*.tmp
+*.log
+
+# IDE & OS Files
+.DS_Store
+.idea/
+.vscode/
+Thumbs.db

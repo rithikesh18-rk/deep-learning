@@ -49,3 +49,10 @@ database/*.db
 .DS_Store?
 ._*
 Thumbs.db
+
+# Large FAISS Index Binary Files
+*.index
+models/*.index
+
+# Local Development Directories
+defectguard-patchcore/

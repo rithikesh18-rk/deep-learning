@@ -1,0 +1,14 @@
+{
+  "dataset": "mvtec_bottle",
+  "total_train_images": 209,
+  "total_extracted_patches": 163856,
+  "coreset_size": 163856,
+  "feature_dim": 1536,
+  "grid_size": [
+    28,
+    28
+  ],
+  "sampling_ratio": 1.0,
+  "backbone": "wide_resnet50_2",
+  "elapsed_seconds": 52.88
+}

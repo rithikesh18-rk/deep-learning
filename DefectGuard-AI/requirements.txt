@@ -1,0 +1,13 @@
+torch
+torchvision
+faiss-cpu
+opencv-python
+numpy
+scipy
+scikit-learn
+fastapi
+uvicorn
+python-multipart
+Pillow
+pyyaml
+requests
