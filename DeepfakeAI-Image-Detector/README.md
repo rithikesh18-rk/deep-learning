@@ -2,6 +2,8 @@
 
 A deep-learning powered digital forensics system combining **Spatial Domain Convolutional Features** (via ConvNeXt-Tiny) and **Frequency Domain Log-Magnitude Spectra** (via windowed 2D Fast Fourier Transform & 4-Layer Spectrum CNN) to detect AI-generated imagery and synthetic manipulations with explainable Grad-CAM heatmaps.
 
+[SPECTRA // AI Digital Forensics Suite & Deepfake Detector](https://spectra-forensics.vercel.app/)
+
 ---
 
 ## 🌟 Architecture Overview
